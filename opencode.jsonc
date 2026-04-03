@@ -9,7 +9,7 @@
     "sequential-thinking": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"], 
-      "enabled": false
+      "enabled": true
     },
     "context-mode": {
       "type": "local",
@@ -24,5 +24,11 @@
   },
   "agent": {
   },
-  "plugin": ["context-mode"]
+  "plugin": ["context-mode"], 
+  "lsp": {
+    "python": {
+      "command": [".venv/bin/pyright-langserver", "--stdio"], 
+      "extensions": [".py", ".pyi"]
+    }
+  }
 }
