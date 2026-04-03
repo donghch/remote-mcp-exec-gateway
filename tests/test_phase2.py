@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 
 from config.models import (
-    CommandPolicy,
+    BannedCommand,
+    CommandOverride,
     ConfirmationGates,
+    ConfirmationRequired,
     FileLimits,
     PolicyBlock,
     PolicyConfig,
@@ -23,7 +25,7 @@ from config.models import (
     TLSConfig,
 )
 from session.manager import SessionManager
-from tools.base import ErrorCode, ToolError
+from tools.base import ToolError
 from tools.command import CommandExecutor
 from tools.filesystem import FileSystemTools
 
@@ -46,18 +48,23 @@ async def session_manager() -> SessionManager:
     return SessionManager(cfg, cgroup_manager=None)
 
 
-def _make_policy(tmp_path: Path, **cmd_overrides) -> PolicyConfig:
-    """Build a policy that allows tmp_path and optional commands."""
-    commands = {}
-    for name, opts in cmd_overrides.items():
-        if isinstance(opts, CommandPolicy):
-            commands[name] = opts
-        else:
-            commands[name] = CommandPolicy(**opts)
+def _make_policy(
+    tmp_path: Path,
+    *,
+    banned_commands: list[BannedCommand] | None = None,
+    confirmation_required: list[ConfirmationRequired] | None = None,
+    command_overrides: dict[str, CommandOverride] | None = None,
+) -> PolicyConfig:
+    """Build a blacklist-based policy scoped to tmp_path.
 
+    All commands are allowed by default.  Pass banned_commands,
+    confirmation_required, and/or command_overrides to shape the policy.
+    """
     return PolicyConfig(
         policy=PolicyBlock(
-            allowed_commands=commands,
+            banned_commands=banned_commands or [],
+            confirmation_required=confirmation_required or [],
+            command_overrides=command_overrides or {},
             allowed_paths=[f"{tmp_path}/**"],
             blocked_paths=[],
             file_limits=FileLimits(),
@@ -225,18 +232,18 @@ class TestConfirmationGate:
     async def test_confirmation_required_blocks(
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
+        # Arrange: python3 requires confirmation
         policy = _make_policy(
             tmp_path,
-            python3=CommandPolicy(
-                executable="/usr/bin/python3",
-                max_args=10,
-                requires_confirmation=True,
-            ),
+            confirmation_required=[
+                ConfirmationRequired(name="python3", reason="Can execute arbitrary code"),
+            ],
         )
         await session_manager.create_session("cg", tmp_path, None, None)  # type: ignore[arg-type]
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
-        with pytest.raises(ToolError, match="requires explicit confirmation"):
+        # Act + Assert: confirm=False → blocked
+        with pytest.raises(ToolError, match="requires confirmation"):
             await executor.execute("cg", ["python3", "--version"])
 
         await session_manager.kill_session("cg")
@@ -245,17 +252,17 @@ class TestConfirmationGate:
     async def test_confirmation_passed(
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
+        # Arrange: ls requires confirmation
         policy = _make_policy(
             tmp_path,
-            ls=CommandPolicy(
-                executable="/bin/ls",
-                max_args=10,
-                requires_confirmation=True,
-            ),
+            confirmation_required=[
+                ConfirmationRequired(name="ls", reason="Lists directory contents"),
+            ],
         )
         await session_manager.create_session("cg2", tmp_path, None, None)  # type: ignore[arg-type]
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
+        # Act: confirm=True → allowed
         result = await executor.execute("cg2", ["ls"], confirm=True)
         assert result.success
 
@@ -265,18 +272,12 @@ class TestConfirmationGate:
     async def test_no_confirmation_needed(
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
-        policy = _make_policy(
-            tmp_path,
-            ls=CommandPolicy(
-                executable="/bin/ls",
-                max_args=10,
-                requires_confirmation=False,
-            ),
-        )
+        # Arrange: ls is NOT in confirmation_required — runs freely
+        policy = _make_policy(tmp_path)
         await session_manager.create_session("cg3", tmp_path, None, None)  # type: ignore[arg-type]
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
-        # Should work without confirm=True
+        # Act: no confirm flag needed
         result = await executor.execute("cg3", ["ls"])
         assert result.success
 
@@ -290,9 +291,8 @@ class TestConfirmationGate:
 
 class TestResourceOverride:
     def test_resource_override_stored(self) -> None:
-        """Verify CommandPolicy stores resource_override correctly."""
-        policy = CommandPolicy(
-            executable="/usr/bin/python3",
+        """Verify CommandOverride stores resource_override correctly."""
+        override = CommandOverride(
             max_args=10,
             resource_override=ResourceLimits(
                 memory_max="268435456",  # 256MB
@@ -300,9 +300,9 @@ class TestResourceOverride:
                 cpu_quota_us=50000,
             ),
         )
-        assert policy.resource_override is not None
-        assert policy.resource_override.memory_max == "268435456"
-        assert policy.resource_override.pids_max == 16
+        assert override.resource_override is not None
+        assert override.resource_override.memory_max == "268435456"
+        assert override.resource_override.pids_max == 16
 
     @pytest.mark.asyncio
     async def test_execute_without_cgroup_mgr(
@@ -311,11 +311,12 @@ class TestResourceOverride:
         """Resource override is silently skipped when cgroup manager is unavailable."""
         policy = _make_policy(
             tmp_path,
-            ls=CommandPolicy(
-                executable="/bin/ls",
-                max_args=10,
-                resource_override=ResourceLimits(memory_max="128M", pids_max=8),
-            ),
+            command_overrides={
+                "ls": CommandOverride(
+                    max_args=10,
+                    resource_override=ResourceLimits(memory_max="128M", pids_max=8),
+                ),
+            },
         )
         await session_manager.create_session("rq", tmp_path, None, None)  # type: ignore[arg-type]
         executor = CommandExecutor(session_manager, policy, user_ctx=None, cgroup_manager=None)

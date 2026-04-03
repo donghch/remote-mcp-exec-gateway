@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from config.models import PolicyConfig, ResourceLimits
+from security.sanitizer import CommandSanitizer
 from security.sandbox import CGroupContext, CGroupManager, UserContext, make_preexec_fn
 from session.manager import Session, SessionManager
 from tools.base import ErrorCode, ToolError, ToolResult
@@ -29,7 +30,7 @@ MAX_OUTPUT_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class CommandExecutor:
-    """Executes whitelisted commands in a sandboxed subprocess."""
+    """Executes commands in a sandboxed subprocess using blacklist policy."""
 
     def __init__(
         self,
@@ -40,6 +41,7 @@ class CommandExecutor:
     ) -> None:
         self._sessions = session_manager
         self._policy = policy
+        self._sanitizer = CommandSanitizer(policy)
         self._user_ctx = user_ctx
         self._cgroup_mgr = cgroup_manager
 
@@ -58,7 +60,7 @@ class CommandExecutor:
             argv: Command as argv array (e.g. ["git", "status"]).
             timeout_seconds: Max execution time (default 30s, max 300s).
             stdin_input: Optional stdin content.
-            confirm: Set True to pass confirmation gate for destructive commands.
+            confirm: Set True to pass confirmation gate for commands requiring it.
         """
         session = self._sessions.get_session(session_id)
         if session is None:
@@ -70,36 +72,38 @@ class CommandExecutor:
         if not argv:
             raise ToolError(ErrorCode.CMD_EXEC_FAILED, "Empty command argv")
 
-        # Validate against whitelist
-        cmd_name = argv[0]
-        cmd_policy = self._policy.policy.allowed_commands.get(cmd_name)
-        if cmd_policy is None:
+        # Validate against blacklist policy
+        try:
+            validated = self._sanitizer.validate(argv, confirm=confirm)
+        except ValueError as exc:
+            # Determine error code based on violation type
+            if self._sanitizer.is_banned(argv[0]):
+                raise ToolError(
+                    ErrorCode.POLICY_COMMAND_BLOCKED,
+                    str(exc),
+                    details={"command": argv[0], "hint": "Command is banned"},
+                ) from exc
+            if self._sanitizer.requires_confirmation(argv[0]) and not confirm:
+                raise ToolError(
+                    ErrorCode.POLICY_CONFIRMATION_REQUIRED,
+                    str(exc),
+                    details={"command": argv[0], "hint": "Pass confirm=true to acknowledge"},
+                ) from exc
             raise ToolError(
                 ErrorCode.POLICY_COMMAND_BLOCKED,
-                f"Command '{cmd_name}' is not in the allowed whitelist",
-            )
+                str(exc),
+            ) from exc
 
-        # Confirmation gate
-        if cmd_policy.requires_confirmation and not confirm:
-            raise ToolError(
-                ErrorCode.POLICY_CONFIRMATION_REQUIRED,
-                f"Command '{cmd_name}' requires explicit confirmation. "
-                f"Set confirm=true to proceed.",
-                details={"command": cmd_name, "hint": "Pass confirm=true to acknowledge"},
-            )
-
-        # Build argv with full executable path
-        exec_argv = [cmd_policy.executable, *argv[1:]]
+        # Build argv — use command name directly (resolved via PATH)
+        exec_argv = validated.argv
 
         # Resolve timeout
         timeout = timeout_seconds or 30
-        max_timeout = (
-            self._policy.server.timeouts.command_max if hasattr(self._policy, "server") else 300
-        )
         timeout = min(timeout, 300)
 
-        # Apply per-command resource override (Phase 2)
-        command_cgroup = await self._apply_resource_override(session, cmd_policy.resource_override)
+        # Apply per-command resource override
+        resource_override = validated.override.resource_override if validated.override else None
+        command_cgroup = await self._apply_resource_override(session, resource_override)
 
         # Build preexec_fn
         preexec = None

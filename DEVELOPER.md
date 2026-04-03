@@ -143,10 +143,17 @@ The validation chain: parse cert → check expiry → verify CA signature → ex
 
 ### `audit/logger.py`
 
-- **`AuditLogger(log_path, console)`** — wraps structlog with JSON renderer
-  - `log(event_type, session_id, client_dn, tool_name, arguments, ...)` — writes JSON line
+- **`AuditLogger(log_path, error_log_path, console)`** — wraps structlog with JSON renderer
+  - `log(event_type, ...)` — writes JSON line to audit log; error events also go to error log
+  - `log_error(error, error_code, session_id, ...)` — convenience method for errors; includes traceback by default
   - `_redact(data)` — strips password/token/secret/key fields
-  - `close()` — flushes and closes file handle
+  - `close()` — flushes and closes both file handles
+
+**Two log files**:
+- `audit.log` — all events (success + error)
+- `audit-errors.log` — error events only (for fast triage). Defaults to `<audit_log>-errors.log` if not configured.
+
+Error events (`COMMAND_FAILED`, `AUTH_FAILURE`, `POLICY_VIOLATION`, `ERROR`) and any event with an `error` field are automatically written to both files.
 
 ---
 
@@ -242,11 +249,15 @@ No code changes needed — the policy is loaded at startup.
 | `server.tls.key_path` | Path | — | Server private key PEM |
 | `server.tls.ca_cert_path` | Path | — | CA cert for client validation |
 | `server.tls.min_version` | str | `"TLSv1.3"` | Minimum TLS version |
+| `server.tls.enabled` | bool | `true` | Enable/disable mTLS |
 | `server.logging.level` | str | `"INFO"` | Log level |
 | `server.logging.audit_log` | Path | — | Audit log file path |
+| `server.logging.error_log` | Path \| null | `<audit_log>-errors.log` | Error-only log file path |
+| `server.logging.max_size_mb` | int | `100` | Max log file size |
 | `server.sessions.max_session_age` | int | `1800` | Inactivity timeout (seconds) |
 | `server.sessions.max_concurrent` | int | `10` | Max simultaneous sessions |
 | `server.sessions.cleanup_interval` | int | `60` | Cleanup sweep interval (seconds) |
+| `server.sessions.default_working_dir` | str | User's home | Default working directory for new sessions (can be overridden per-session) |
 | `server.timeouts.command_default` | int | `30` | Default command timeout |
 | `server.timeouts.command_max` | int | `300` | Maximum allowed timeout |
 | `server.sandbox.unprivileged_user` | str | `"oc-runner"` | OS user for subprocesses |
@@ -262,7 +273,7 @@ No code changes needed — the policy is loaded at startup.
 | `policy.allowed_commands.<name>.allowed_prefixes` | list[str] \| null | Restrict subcommands |
 | `policy.allowed_commands.<name>.requires_confirmation` | bool | Gate destructive ops |
 | `policy.allowed_commands.<name>.resource_override` | object \| null | Per-command cgroup limits |
-| `policy.allowed_paths` | list[str] | Glob patterns for workspace access |
+| `policy.allowed_paths` | list[str] | Glob patterns for workspace access (default includes `~//**` for user's home) |
 | `policy.blocked_paths` | list[str] | Glob patterns always denied |
 | `policy.file_limits.max_read_size` | int | Max bytes for file reads |
 | `policy.file_limits.max_write_size` | int | Max bytes for file writes |
@@ -312,6 +323,7 @@ Shell interpretation enables command injection (`; rm -rf /`, `$(malicious)`, `|
 
 ```
 create_session()
+  ├── Default working_dir to user's home if not specified
   ├── Validate working_dir exists
   ├── Create cgroup: /sys/fs/cgroup/oc-broker/session-{id}/
   ├── Apply resource limits to cgroup
@@ -358,6 +370,8 @@ uv run pytest tests/ -v
 | `test_filesystem.py` | File append mode | Integration with temp sessions |
 | `test_sandbox.py` | CGroupManager, UserContext | Mocked (no real cgroups needed) |
 | `test_phase2.py` | Download/upload, confirmation gate, resource quotas | Integration with temp sessions |
+| `test_tls.py` | TLSConfig on/off, SSL context creation | Unit tests with self-signed certs |
+| `test_error_logging.py` | Error log file, log_error(), traceback, event types | Unit tests with temp files |
 
 ### Writing new tests
 
@@ -368,7 +382,7 @@ For **tool tests**, use the `tmp_path` pytest fixture and create a policy that a
 async def test_my_feature(session_manager: SessionManager, tmp_path: Path):
     policy = PolicyConfig(
         policy=PolicyBlock(
-            allowed_paths=[f"{tmp_path}/**"],
+            allowed_paths=[f"{tmp_path}/**", "~//**", "/home/**"],
             # ...
         )
     )
@@ -398,3 +412,4 @@ For **sandbox tests**, mock `CGroupManager` since test environments may not have
 | File transfer | Chunked base64 | Works over MCP tool calls, no separate HTTP endpoints |
 | Confirmation | `confirm` param on execute_command | Explicit opt-in for destructive commands |
 | Resource quotas | Per-command cgroup | Override default limits for heavy commands (e.g. Python) |
+| TLS toggle | `tls.enabled` + `--no-tls` | Run plain HTTP for development, mTLS for production |

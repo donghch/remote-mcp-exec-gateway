@@ -11,7 +11,7 @@ The broker lets an AI agent operate on a remote machine without requiring any cl
 - **mTLS authentication** — Mutual TLS 1.3 ensures only trusted clients connect
 - **Sandboxed execution** — cgroups v2 resource limits + unprivileged OS user for every subprocess
 - **Path validation** — All file operations are canonicalized and restricted to workspace roots
-- **Session isolation** — Each session gets its own working directory, environment, and process group
+- **Session isolation** — Each session gets its own working directory (defaults to user's home), environment, and process group
 - **Full audit logging** — Every tool call is logged with structured JSON (timestamp, client, args, exit code, duration)
 - **No shell interpretation** — Commands run as argv arrays; shell metacharacters are disallowed
 
@@ -53,20 +53,24 @@ Two YAML files in `config/` control the broker:
 
 ```yaml
 server:
-  host: "0.0.0.0"
-  port: 8443
+  host: "127.0.0.1"
+  port: 8080
   tls:
-    cert_path: "/etc/oc-broker/server.crt"
-    key_path: "/etc/oc-broker/server.key"
-    ca_cert_path: "/etc/oc-broker/ca.crt"
-    min_version: "TLSv1.3"
-  sessions:
-    max_session_age: 1800       # 30 minutes inactivity timeout
-    max_concurrent: 10
+    enabled: false             # Plain HTTP by default
+    cert_path: "certs/server.crt"
+    key_path: "certs/server.key"
+    ca_cert_path: "certs/ca.crt"
+  logging:
+    audit_log: "log/audit.log"
+    error_log: "log/audit-errors.log"
   sandbox:
-    unprivileged_user: "oc-runner"
-    enable_cgroups: true
+    unprivileged_user: ""       # Empty = no privilege dropping
+    cgroup_base: "data/cgroup"
+    enable_cgroups: false
 ```
+
+> All paths are relative to the project root. No root privileges required for default config.
+> Use `--no-tls` CLI flag or `tls.enabled: false` in config to control TLS.
 
 ### `config/policy.yaml` — Security policy
 
@@ -83,9 +87,13 @@ policy:
       max_args: 10
       requires_confirmation: false
   allowed_paths:
-    - "/home/oc-runner/workspace/**"
+    - "~//**"                    # User's home directory (default session working dir)
+    - "/home/**"                 # All user home directories
+    - "/tmp/**"                  # Temporary files
   blocked_paths:
     - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.aws/**"
     - "**/.env"
   resource_limits:
     memory_max: "536870912"     # 512 MB
@@ -96,56 +104,42 @@ See `config/server.yaml` and `config/policy.yaml` for all available options.
 
 ## Quick Start
 
-### 1. Generate TLS certificates
+### 1. Start the broker (no setup needed)
 
 ```bash
-mkdir -p /etc/oc-broker
+uv sync
+uv run python main.py
+```
 
-# Generate CA
+The broker starts on `http://127.0.0.1:8080` with plain HTTP. No root, no certs, no sandbox user required.
+
+### 2. Enable mTLS (optional, for production)
+
+```bash
+# Generate certs
+mkdir -p certs
 openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
-  -keyout /etc/oc-broker/ca.key -out /etc/oc-broker/ca.crt \
-  -subj "/CN=OC-Broker CA"
-
-# Generate server cert
+  -keyout certs/ca.key -out certs/ca.crt -subj "/CN=OC-Broker CA"
 openssl req -newkey rsa:4096 -nodes \
-  -keyout /etc/oc-broker/server.key -out /etc/oc-broker/server.csr \
-  -subj "/CN=oc-broker-server"
+  -keyout certs/server.key -out certs/server.csr -subj "/CN=oc-broker-server"
 openssl x509 -req -days 365 \
-  -in /etc/oc-broker/server.csr -CA /etc/oc-broker/ca.crt \
-  -CAkey /etc/oc-broker/ca.key -CAcreateserial \
-  -out /etc/oc-broker/server.crt
+  -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial \
+  -out certs/server.crt
 
-# Generate client cert
-openssl req -newkey rsa:4096 -nodes \
-  -keyout client.key -out client.csr \
-  -subj "/CN=openclaw-client"
-openssl x509 -req -days 365 \
-  -in client.csr -CA /etc/oc-broker/ca.crt \
-  -CAkey /etc/oc-broker/ca.key -CAcreateserial \
-  -out client.crt
+# Edit config/server.yaml: tls.enabled: true
+# Then start:
+uv run python main.py --host 0.0.0.0 --port 8443
 ```
 
-### 2. Create the sandbox user
+### 3. Connect from an MCP client
 
-```bash
-sudo useradd -r -m -s /bin/bash oc-runner
-```
-
-### 3. Start the broker
-
-```bash
-uv run python main.py --config-dir config --host 0.0.0.0 --port 8443
-```
-
-### 4. Connect from an MCP client
-
-The broker exposes tools over Streamable HTTP at `https://<host>:8443/mcp`. Any MCP-compatible client can connect using mTLS with the client certificate generated above.
+The broker exposes tools over Streamable HTTP at `http://<host>:<port>/mcp` (or `https://` with TLS enabled). Any MCP-compatible client can connect.
 
 ## Available Tools
 
 | Tool | Description |
 |------|-------------|
-| `create_session` | Create a sandboxed execution session with a working directory |
+| `create_session` | Create a sandboxed execution session (defaults to user's home directory) |
 | `kill_session` | Terminate a session and clean up all its processes |
 | `execute_command` | Run a whitelisted command as an argv array with timeout |
 | `read_file` | Read a file from the session workspace |
@@ -288,13 +282,33 @@ Client (AI Agent)
 
 ## Audit Logs
 
-Every tool invocation is logged as a JSON line to the configured audit log:
+Every tool invocation is logged as a JSON line. There are two log files:
+
+### `audit.log` — All events
+
+Every operation (success and failure) is recorded:
 
 ```json
 {"timestamp": "2026-04-02T18:30:00Z", "event_type": "COMMAND_COMPLETED", "session_id": "abc-123", "tool_name": "execute_command", "exit_code": 0, "duration_ms": 450}
 ```
 
-Log location is configured in `server.yaml` → `server.logging.audit_log`.
+### `audit-errors.log` — Errors only
+
+Failed operations are also written to a dedicated error log for fast triage. Each entry includes `error_code`, the error message, and (for exceptions) a full traceback:
+
+```json
+{"timestamp": "2026-04-02T18:30:01Z", "event_type": "COMMAND_FAILED", "session_id": "abc-123", "tool_name": "execute_command", "error": "Command 'curl' is not in the allowed whitelist", "error_code": "POLICY_001", "arguments": {"argv": ["curl", "example.com"]}}
+```
+
+Log paths are configured in `server.yaml` → `server.logging`:
+
+```yaml
+logging:
+  audit_log: "log/audit.log"
+  error_log: "log/audit-errors.log"
+```
+
+If `error_log` is omitted, it defaults to `<audit_log>-errors.log`.
 
 ## CLI Reference
 
@@ -305,6 +319,17 @@ Options:
   --config-dir PATH   Path to configuration directory (default: config)
   --host ADDRESS      Override server bind address
   --port PORT         Override server port
+  --no-tls            Disable mTLS and run over plain HTTP (overrides config)
+```
+
+### Running without TLS (development)
+
+```bash
+# Via config
+# Edit config/server.yaml: tls.enabled: false
+
+# Or via CLI flag
+uv run python main.py --no-tls --host 127.0.0.1 --port 8080
 ```
 
 ## Project Structure

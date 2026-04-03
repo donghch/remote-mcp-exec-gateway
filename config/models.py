@@ -13,9 +13,10 @@ from pydantic import BaseModel, Field
 
 
 class TLSConfig(BaseModel):
-    cert_path: Path
-    key_path: Path
-    ca_cert_path: Path
+    enabled: bool = True
+    cert_path: Path | None = None
+    key_path: Path | None = None
+    ca_cert_path: Path | None = None
     min_version: Literal["TLSv1.2", "TLSv1.3"] = "TLSv1.3"
 
 
@@ -33,6 +34,7 @@ class LoggingConfig(BaseModel):
     level: LogLevel = LogLevel.INFO
     format: Literal["json", "console"] = "json"
     audit_log: Path
+    error_log: Path | None = None  # Dedicated error log (defaults to audit_log + .errors)
     max_size_mb: int = Field(ge=1, default=100)
     backup_count: int = Field(ge=0, default=10)
 
@@ -58,9 +60,9 @@ class TimeoutConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    unprivileged_user: str = "oc-runner"
-    cgroup_base: Path = Path("/sys/fs/cgroup/oc-broker")
-    enable_cgroups: bool = True
+    unprivileged_user: str = ""
+    cgroup_base: Path = Path("data/cgroup")
+    enable_cgroups: bool = False
 
 
 # --- Server block ---
@@ -95,11 +97,25 @@ class ResourceLimits(BaseModel):
     io_weight: int | None = Field(ge=10, le=1000, default=100)
 
 
-class CommandPolicy(BaseModel):
-    executable: str
+class BannedCommand(BaseModel):
+    """A command that is explicitly blocked from execution."""
+
+    name: str
+    reason: str = ""
+
+
+class ConfirmationRequired(BaseModel):
+    """A command that requires explicit user confirmation before execution."""
+
+    name: str
+    reason: str = ""
+
+
+class CommandOverride(BaseModel):
+    """Optional per-command overrides for args and subcommand restrictions."""
+
     max_args: int = Field(ge=1, default=20)
     allowed_prefixes: list[str] | None = None
-    requires_confirmation: bool = False
     resource_override: ResourceLimits | None = None
 
 
@@ -115,7 +131,9 @@ class ConfirmationGates(BaseModel):
 
 
 class PolicyBlock(BaseModel):
-    allowed_commands: dict[str, CommandPolicy] = {}
+    banned_commands: list[BannedCommand] = []
+    confirmation_required: list[ConfirmationRequired] = []
+    command_overrides: dict[str, CommandOverride] = {}
     allowed_paths: list[str] = []
     blocked_paths: list[str] = []
     file_limits: FileLimits = FileLimits()

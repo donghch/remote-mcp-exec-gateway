@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/nav | Priority: high | Version: 1.0 | Updated: 2025-01-12 -->
+<!-- Context: project-intelligence/nav | Priority: high | Version: 1.1 | Updated: 2026-04-02 -->
 
 # Project Intelligence
 
@@ -21,7 +21,7 @@
 | What You Need | File | Description |
 |---------------|------|-------------|
 | Understand the "why" | `business-domain.md` | Problem, users, value proposition |
-| Understand the "how" | `technical-domain.md` | Stack, architecture, MCP tools, security (v2.0) |
+| Understand the "how" | `technical-domain.md` | Stack, architecture, MCP tools, security (v2.1) |
 | See the connection | `business-tech-bridge.md` | Business → technical mapping |
 | Know the context | `decisions-log.md` | Why decisions were made |
 | Current state | `living-notes.md` | Active issues and open questions |

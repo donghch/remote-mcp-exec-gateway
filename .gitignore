@@ -11,6 +11,11 @@ wheels/
 # Virtual environments
 .venv
 
-# Others
+# Runtime directories
 .tmp
+log/
+data/
+certs/
+tmp/
+workspace/
 

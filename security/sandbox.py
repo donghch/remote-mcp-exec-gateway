@@ -65,28 +65,63 @@ class CGroupManager:
 
     # ---- Setup ----
 
-    def initialize(self) -> None:
-        """Create the base cgroup and enable subtree controllers."""
-        self._base.mkdir(parents=True, exist_ok=True)
+    def initialize(self) -> bool:
+        """Create the base cgroup and enable subtree controllers.
+
+        Returns True if initialization succeeded, False otherwise.
+        Fails gracefully if cgroup filesystem is not writable.
+        """
+        try:
+            self._base.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            return False
 
         controllers = " ".join(f"+{c}" for c in self.REQUIRED_CONTROLLERS)
         subtree_file = self._base / "cgroup.subtree_control"
         if subtree_file.exists():
-            subtree_file.write_text(controllers)
+            try:
+                subtree_file.write_text(controllers)
+            except (OSError, PermissionError):
+                return False
+
+        return True
 
     def is_available(self) -> bool:
-        """Check if cgroups v2 is mounted and usable."""
+        """Check if cgroups v2 is mounted and writable."""
         unified = Path("/sys/fs/cgroup")
-        return (unified / "cgroup.controllers").exists()
+        controllers_file = unified / "cgroup.controllers"
+        if not controllers_file.exists():
+            return False
+
+        # Check write access: can we create a directory under the base?
+        try:
+            test_dir = self._base / ".oc-broker-test"
+            test_dir.mkdir(parents=True, exist_ok=True)
+            test_dir.rmdir()
+            return True
+        except (OSError, PermissionError):
+            return False
 
     # ---- Per-session cgroup ----
 
     def create_session_cgroup(self, session_id: str, limits: ResourceLimits) -> CGroupContext:
-        """Create a cgroup for a session and apply resource limits."""
+        """Create a cgroup for a session and apply resource limits.
+
+        Raises OSError if cgroup creation fails.
+        """
         cgroup_path = self._base / f"session-{session_id}"
         cgroup_path.mkdir(exist_ok=False)
 
-        self._apply_limits(cgroup_path, limits)
+        try:
+            self._apply_limits(cgroup_path, limits)
+        except (OSError, PermissionError):
+            # Cleanup on failure
+            try:
+                cgroup_path.rmdir()
+            except OSError:
+                pass
+            raise
+
         ctx = CGroupContext(path=cgroup_path, session_id=session_id)
         self._active[session_id] = ctx
         return ctx

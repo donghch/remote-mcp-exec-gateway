@@ -9,17 +9,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import signal as _signal
+import ssl
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from audit.logger import AuditLogger, EventType
 from config.loader import load_configs
 from config.models import PolicyConfig, ServerConfig
+from security.auth import create_ssl_context
 from security.sandbox import CGroupManager, UserContext
 from session.manager import SessionManager
 from tools.base import ToolError, ToolResult
@@ -71,22 +74,41 @@ async def _lifespan(app: FastMCP) -> AsyncIterator[None]:
     srv = _server_config.server
 
     # Audit logger
-    _audit = AuditLogger(log_path=srv.logging.audit_log)
+    _audit = AuditLogger(
+        log_path=srv.logging.audit_log,
+        error_log_path=srv.logging.error_log,
+    )
     _audit.log(EventType.SERVER_START)
 
     # CGroup manager (optional)
     _cgroup_mgr = CGroupManager(srv.sandbox.cgroup_base)
     if srv.sandbox.enable_cgroups and _cgroup_mgr.is_available():
-        _cgroup_mgr.initialize()
+        if not _cgroup_mgr.initialize():
+            _audit.log_error(
+                "CGroup initialization failed, running without sandbox",
+                event_type=EventType.ERROR,
+                error_details={"component": "CGroupManager"},
+            )
 
     # Session manager
     _session_mgr = SessionManager(_server_config, _cgroup_mgr)
     await _session_mgr.start()
 
-    # User context (optional — skip if user doesn't exist)
-    try:
-        _user_ctx = UserContext(srv.sandbox.unprivileged_user)
-    except ValueError:
+    # User context (optional — skip if user is empty or doesn't exist)
+    if srv.sandbox.unprivileged_user:
+        try:
+            _user_ctx = UserContext(srv.sandbox.unprivileged_user)
+        except ValueError as exc:
+            _audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_details={
+                    "component": "UserContext",
+                    "hint": "Sandbox user not available, running without privilege separation",
+                },
+            )
+            _user_ctx = None
+    else:
         _user_ctx = None
 
     # Tool instances
@@ -123,18 +145,22 @@ def create_server(config_dir: str = "config") -> FastMCP:
     @mcp.tool()
     async def create_session(
         id: str | None = None,
-        working_dir: str = "/tmp",
+        working_dir: str | None = None,
         environment: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Create a new execution session with sandboxed context.
 
         Args:
             id: Optional session ID (auto-generated if omitted).
-            working_dir: Initial working directory for the session.
+            working_dir: Initial working directory for the session (defaults to user's home directory).
             environment: Optional environment variables for commands.
         """
         sm = _require(_session_mgr, "SessionManager")
         audit = _require(_audit, "AuditLogger")
+
+        # Default to user's home directory if not specified
+        if working_dir is None:
+            working_dir = str(Path.home())
 
         try:
             session = await sm.create_session(
@@ -151,6 +177,13 @@ def create_server(config_dir: str = "config") -> FastMCP:
                 "created_at": session.created_at.isoformat(),
             }
         except Exception as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                tool_name="create_session",
+                arguments={"id": id, "working_dir": working_dir},
+                error_details={"error_code": "SESSION_004"},
+            )
             return ToolResult(success=False, error_message=str(exc)).model_dump()
 
     @mcp.tool()
@@ -168,6 +201,13 @@ def create_server(config_dir: str = "config") -> FastMCP:
         if ok:
             audit.log(EventType.SESSION_KILLED, session_id=session_id)
             return {"success": True, "session_id": session_id}
+        audit.log(
+            EventType.ERROR,
+            session_id=session_id,
+            tool_name="kill_session",
+            error=f"Session '{session_id}' not found",
+            error_code="SESSION_001",
+        )
         return {"success": False, "error_message": f"Session '{session_id}' not found"}
 
     @mcp.tool()
@@ -238,6 +278,14 @@ def create_server(config_dir: str = "config") -> FastMCP:
             audit.log(EventType.FILE_READ, session_id=session_id, arguments={"path": path})
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="read_file",
+                arguments={"path": path},
+            )
             return exc.to_result().model_dump()
 
     @mcp.tool()
@@ -263,6 +311,14 @@ def create_server(config_dir: str = "config") -> FastMCP:
             audit.log(EventType.FILE_WRITE, session_id=session_id, arguments={"path": path})
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="write_file",
+                arguments={"path": path},
+            )
             return exc.to_result().model_dump()
 
     @mcp.tool()
@@ -286,6 +342,14 @@ def create_server(config_dir: str = "config") -> FastMCP:
             audit.log(EventType.FILE_LIST, session_id=session_id, arguments={"path": path})
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="list_directory",
+                arguments={"path": path},
+            )
             return exc.to_result().model_dump()
 
     @mcp.tool()
@@ -312,12 +376,20 @@ def create_server(config_dir: str = "config") -> FastMCP:
         try:
             result = await fs.download_file(session_id, path, chunk_size=chunk_size, offset=offset)
             audit.log(
-                EventType.FILE_READ,
+                EventType.FILE_DOWNLOAD,
                 session_id=session_id,
                 arguments={"path": path, "offset": offset},
             )
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="download_file",
+                arguments={"path": path},
+            )
             return exc.to_result().model_dump()
 
     @mcp.tool()
@@ -356,12 +428,20 @@ def create_server(config_dir: str = "config") -> FastMCP:
             )
             if result.is_complete:
                 audit.log(
-                    EventType.FILE_WRITE,
+                    EventType.FILE_UPLOAD,
                     session_id=session_id,
                     arguments={"path": path, "bytes": result.bytes_received},
                 )
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="upload_file",
+                arguments={"path": path},
+            )
             return exc.to_result().model_dump()
 
     @mcp.tool()
@@ -407,6 +487,14 @@ def create_server(config_dir: str = "config") -> FastMCP:
             )
             return result.model_dump()
         except ToolError as exc:
+            audit.log_error(
+                exc,
+                event_type=EventType.ERROR,
+                error_code=exc.code.value,
+                session_id=session_id,
+                tool_name="kill_process",
+                arguments={"pid": pid, "signal": signal},
+            )
             return exc.to_result().model_dump()
 
     return mcp
@@ -435,18 +523,54 @@ def main() -> None:
         default=None,
         help="Override server port",
     )
+    parser.add_argument(
+        "--no-tls",
+        action="store_true",
+        help="Disable mTLS and run over plain HTTP (overrides config)",
+    )
     args = parser.parse_args()
+
+    # Load config early to determine TLS mode
+    config_dir = Path(args.config_dir)
+    server_cfg, _ = load_configs(config_dir)
+    srv = server_cfg.server
+
+    host = args.host or srv.host
+    port = args.port or srv.port
+    tls_enabled = srv.tls.enabled and not args.no_tls
 
     mcp = create_server(config_dir=args.config_dir)
 
-    # Allow CLI overrides
-    run_kwargs: dict[str, Any] = {"transport": "streamable-http"}
-    if args.host:
-        run_kwargs["host"] = args.host
-    if args.port:
-        run_kwargs["port"] = args.port
+    if tls_enabled:
+        # Validate TLS paths are configured
+        if not srv.tls.cert_path or not srv.tls.key_path or not srv.tls.ca_cert_path:
+            print(
+                "ERROR: TLS enabled but cert_path/key_path/ca_cert_path not configured",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
-    mcp.run(**run_kwargs)
+        ssl_ctx = create_ssl_context(
+            server_cert=srv.tls.cert_path,
+            server_key=srv.tls.key_path,
+            ca_cert=srv.tls.ca_cert_path,
+        )
+        print(f"Starting broker with mTLS on https://{host}:{port}")
+        uvicorn.run(
+            mcp.streamable_http_app(),
+            host=host,
+            port=port,
+            ssl=ssl_ctx,
+            log_level=srv.logging.level.value.lower(),
+        )
+    else:
+        print(f"Starting broker with plain HTTP on http://{host}:{port}")
+        uvicorn.run(
+            mcp.streamable_http_app(),
+            host=host,
+            port=port,
+            log_level=srv.logging.level.value.lower(),
+        )
 
 
 if __name__ == "__main__":

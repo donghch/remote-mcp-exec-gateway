@@ -1,20 +1,23 @@
 # OpenClaw Remote Broker MCP - Server Configuration
 # Version: 1.0
+# All paths are relative to the project root.
 
 server:
-  host: "0.0.0.0"
-  port: 8443
+  host: "127.0.0.1"
+  port: 8080
 
   tls:
-    cert_path: "/etc/oc-broker/server.crt"
-    key_path: "/etc/oc-broker/server.key"
-    ca_cert_path: "/etc/oc-broker/ca.crt"
+    enabled: false              # Plain HTTP by default (no mTLS)
+    cert_path: "certs/server.crt"
+    key_path: "certs/server.key"
+    ca_cert_path: "certs/ca.crt"
     min_version: "TLSv1.3"
 
   logging:
     level: "INFO"
     format: "json"
-    audit_log: "/var/log/oc-broker/audit.log"
+    audit_log: "log/audit.log"
+    error_log: "log/audit-errors.log"
     max_size_mb: 100
     backup_count: 10
 
@@ -22,12 +25,14 @@ server:
     max_session_age: 1800       # 30 minutes inactivity timeout
     max_concurrent: 10
     cleanup_interval: 60        # seconds between cleanup sweeps
+    # Note: Sessions default to the user's home directory (not /tmp)
+    # This can be overridden per-session via the working_dir parameter
 
   timeouts:
     command_default: 30         # seconds
     command_max: 300            # max allowed timeout per command
 
   sandbox:
-    unprivileged_user: "oc-runner"
-    cgroup_base: "/sys/fs/cgroup/oc-broker"
-    enable_cgroups: true
+    unprivileged_user: ""       # Leave empty to skip privilege dropping
+    cgroup_base: "data/cgroup"
+    enable_cgroups: false       # Disabled by default (requires root for real cgroups)

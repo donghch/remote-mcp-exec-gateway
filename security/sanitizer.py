@@ -1,4 +1,4 @@
-"""Input sanitization: path canonicalization, command whitelist enforcement."""
+"""Input sanitization: path canonicalization, command blacklist enforcement."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from config.models import CommandPolicy, PolicyConfig
+from config.models import CommandOverride, PolicyConfig
 
 
 # =====================================================================
@@ -93,57 +93,87 @@ class PathSanitizer:
 
 @dataclass(frozen=True)
 class ValidatedCommand:
-    policy: CommandPolicy
-    executable: str
+    """Result of command validation against the blacklist policy."""
+
+    command_name: str
     argv: list[str]
     requires_confirmation: bool
+    confirmation_reason: str
+    override: CommandOverride | None
 
 
 class CommandSanitizer:
-    """Validates commands against the whitelist policy."""
+    """Validates commands against the blacklist policy.
+
+    All commands are allowed by default. Only banned commands are blocked.
+    Commands in confirmation_required need explicit user consent.
+    """
 
     def __init__(self, policy: PolicyConfig) -> None:
-        self._commands = policy.policy.allowed_commands
+        self._banned = {cmd.name for cmd in policy.policy.banned_commands}
+        self._banned_reasons = {cmd.name: cmd.reason for cmd in policy.policy.banned_commands}
+        self._confirmation = {cmd.name for cmd in policy.policy.confirmation_required}
+        self._confirmation_reasons = {
+            cmd.name: cmd.reason for cmd in policy.policy.confirmation_required
+        }
+        self._overrides = policy.policy.command_overrides
 
-    def validate(self, argv: list[str]) -> ValidatedCommand:
-        """Validate an argv list against the command whitelist.
+    def validate(self, argv: list[str], confirm: bool = False) -> ValidatedCommand:
+        """Validate an argv list against the blacklist policy.
 
         Raises ValueError on any policy violation.
         """
         if not argv:
             raise ValueError("Empty command argv")
 
-        executable_name = argv[0]
+        command_name = argv[0]
 
-        # Look up in whitelist
-        cmd_policy = self._commands.get(executable_name)
-        if cmd_policy is None:
+        # Check banned (deny wins)
+        if command_name in self._banned:
+            reason = self._banned_reasons.get(command_name, "Command is banned")
+            raise ValueError(f"Command '{command_name}' is banned: {reason}")
+
+        # Check confirmation required
+        requires_confirmation = command_name in self._confirmation
+        confirmation_reason = self._confirmation_reasons.get(command_name, "")
+
+        if requires_confirmation and not confirm:
             raise ValueError(
-                f"Command '{executable_name}' is not in the allowed commands whitelist"
+                f"Command '{command_name}' requires confirmation: {confirmation_reason}. "
+                f"Set confirm=true to proceed."
             )
 
-        # Check arg count
-        if len(argv) > cmd_policy.max_args:
+        # Apply overrides if present
+        override = self._overrides.get(command_name)
+
+        # Check arg count against override or default
+        max_args = override.max_args if override else 20
+        if len(argv) > max_args:
             raise ValueError(
-                f"Command '{executable_name}' exceeds max args "
-                f"({len(argv)} > {cmd_policy.max_args})"
+                f"Command '{command_name}' exceeds max args ({len(argv)} > {max_args})"
             )
 
         # Check subcommand prefix if restricted
-        if cmd_policy.allowed_prefixes and len(argv) > 1:
+        if override and override.allowed_prefixes and len(argv) > 1:
             subcommand = argv[1]
-            if subcommand not in cmd_policy.allowed_prefixes:
+            if subcommand not in override.allowed_prefixes:
                 raise ValueError(
-                    f"Subcommand '{subcommand}' is not allowed for '{executable_name}'. "
-                    f"Allowed: {cmd_policy.allowed_prefixes}"
+                    f"Subcommand '{subcommand}' is not allowed for '{command_name}'. "
+                    f"Allowed: {override.allowed_prefixes}"
                 )
 
         return ValidatedCommand(
-            policy=cmd_policy,
-            executable=cmd_policy.executable,
-            argv=[cmd_policy.executable, *argv[1:]],  # Replace name with full path
-            requires_confirmation=cmd_policy.requires_confirmation,
+            command_name=command_name,
+            argv=argv,
+            requires_confirmation=requires_confirmation,
+            confirmation_reason=confirmation_reason,
+            override=override,
         )
 
-    def is_allowed(self, executable_name: str) -> bool:
-        return executable_name in self._commands
+    def is_banned(self, command_name: str) -> bool:
+        """Check if a command is banned."""
+        return command_name in self._banned
+
+    def requires_confirmation(self, command_name: str) -> bool:
+        """Check if a command requires user confirmation."""
+        return command_name in self._confirmation

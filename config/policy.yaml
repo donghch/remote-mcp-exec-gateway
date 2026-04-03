@@ -1,12 +1,68 @@
 # OpenClaw Remote Broker MCP - Security Policy
-# Version: 1.0
-# Only commands listed here can be executed via execute_command.
+# Version: 2.0
+# All commands are allowed by default (blacklist model).
+# Only banned commands are blocked. Commands in confirmation_required need user consent.
 
 policy:
-  # Command Whitelist
-  allowed_commands:
+  # Banned Commands — explicitly blocked from execution
+  banned_commands:
+    - name: "rm"
+      reason: "Destructive file deletion — use file tools instead"
+    - name: "rmdir"
+      reason: "Destructive directory deletion"
+    - name: "dd"
+      reason: "Raw disk operations — risk of data loss"
+    - name: "mkfs"
+      reason: "Filesystem formatting — destructive"
+    - name: "fdisk"
+      reason: "Disk partitioning — destructive"
+    - name: "shutdown"
+      reason: "System shutdown"
+    - name: "reboot"
+      reason: "System reboot"
+    - name: "kill"
+      reason: "Use kill_process tool instead"
+    - name: "pkill"
+      reason: "Use kill_process tool instead"
+    - name: "killall"
+      reason: "Use kill_process tool instead"
+    - name: "chmod"
+      reason: "Permission changes not allowed"
+    - name: "chown"
+      reason: "Ownership changes not allowed"
+    - name: "sudo"
+      reason: "Privilege escalation not allowed"
+    - name: "su"
+      reason: "Privilege escalation not allowed"
+
+  # Confirmation Required — allowed but need explicit user consent
+  confirmation_required:
+    - name: "python3"
+      reason: "Can execute arbitrary code"
+    - name: "python"
+      reason: "Can execute arbitrary code"
+    - name: "pip"
+      reason: "Can install arbitrary packages"
+    - name: "pip3"
+      reason: "Can install arbitrary packages"
+    - name: "curl"
+      reason: "Can download arbitrary content"
+    - name: "wget"
+      reason: "Can download arbitrary content"
+    - name: "nc"
+      reason: "Network operations"
+    - name: "ncat"
+      reason: "Network operations"
+    - name: "ssh"
+      reason: "Remote access"
+    - name: "scp"
+      reason: "Remote file transfer"
+    - name: "rsync"
+      reason: "Remote file sync"
+
+  # Command Overrides — optional per-command restrictions
+  command_overrides:
     git:
-      executable: "/usr/bin/git"
       max_args: 20
       allowed_prefixes:
         - "status"
@@ -21,59 +77,23 @@ policy:
         - "branch"
         - "stash"
         - "remote"
-      requires_confirmation: false
-
-    ls:
-      executable: "/bin/ls"
-      max_args: 10
-      requires_confirmation: false
-
-    cat:
-      executable: "/bin/cat"
-      max_args: 5
-      requires_confirmation: false
-
+        - "show"
+        - "branch"
+        - "tag"
     find:
-      executable: "/usr/bin/find"
       max_args: 15
-      requires_confirmation: false
-
-    grep:
-      executable: "/usr/bin/grep"
-      max_args: 10
-      requires_confirmation: false
-
-    python3:
-      executable: "/usr/bin/python3"
-      max_args: 10
-      requires_confirmation: true
-
-    pip:
-      executable: "/usr/bin/pip3"
-      max_args: 10
-      requires_confirmation: true
-
-    java:
-      executable: "/usr/bin/java"
-      max_args: 20
-      requires_confirmation: true
-
-    mvn:
-      executable: "/usr/bin/mvn"
-      max_args: 20
-      requires_confirmation: false
 
   # Path Restrictions
   # All file operations must stay within allowed paths.
+  # Sessions now default to the user's home directory.
   allowed_paths:
-    - "/home/oc-runner/workspace/**"
-    - "/tmp/oc-scratch/**"
+    - "~//**"                       # User's home directory and all subdirectories
+    - "/home/**"                    # All user home directories
+    - "/tmp/**"                     # Temporary files
 
   blocked_paths:
     - "**/.ssh/**"
     - "**/.gnupg/**"
-    - "**/etc/shadow"
-    - "**/etc/passwd"
     - "**/.aws/**"
     - "**/.env"
 

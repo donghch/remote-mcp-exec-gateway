@@ -21,6 +21,39 @@ class TestCGroupManager:
                 return_value=MagicMock(exists=MagicMock(return_value=True))
             )
 
+    def test_is_available_writable(self, tmp_path: Path) -> None:
+        """is_available() returns True when base dir is writable."""
+        base = tmp_path / "cgroup"
+        mgr = CGroupManager(base)
+        # Patch controllers file check to return True
+        with patch("security.sandbox.Path") as MockPath:
+            mock_unified = MagicMock()
+            mock_unified.__truediv__ = MagicMock(
+                return_value=MagicMock(exists=MagicMock(return_value=True))
+            )
+            MockPath.return_value = mock_unified
+            assert mgr.is_available() is True
+
+    def test_initialize_returns_true_on_success(self, tmp_path: Path) -> None:
+        """initialize() returns True when it succeeds."""
+        base = tmp_path / "cgroup"
+        mgr = CGroupManager(base)
+        result = mgr.initialize()
+        assert result is True
+        assert base.exists()
+
+    def test_initialize_returns_false_on_permission_error(self, tmp_path: Path) -> None:
+        """initialize() returns False, not crash, on permission errors."""
+        readonly_parent = tmp_path / "readonly"
+        readonly_parent.mkdir()
+        readonly_parent.chmod(0o555)
+        try:
+            mgr = CGroupManager(readonly_parent / "cgroup")
+            result = mgr.initialize()
+            assert result is False
+        finally:
+            readonly_parent.chmod(0o755)
+
     def test_create_session_cgroup(self, tmp_path: Path) -> None:
         base = tmp_path / "cgroup"
         mgr = CGroupManager(base)
