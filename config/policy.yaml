@@ -1,0 +1,100 @@
+# OpenClaw Remote Broker MCP - Security Policy
+# Version: 1.0
+# Only commands listed here can be executed via execute_command.
+
+policy:
+  # Command Whitelist
+  allowed_commands:
+    git:
+      executable: "/usr/bin/git"
+      max_args: 20
+      allowed_prefixes:
+        - "status"
+        - "log"
+        - "diff"
+        - "clone"
+        - "pull"
+        - "fetch"
+        - "add"
+        - "commit"
+        - "checkout"
+        - "branch"
+        - "stash"
+        - "remote"
+      requires_confirmation: false
+
+    ls:
+      executable: "/bin/ls"
+      max_args: 10
+      requires_confirmation: false
+
+    cat:
+      executable: "/bin/cat"
+      max_args: 5
+      requires_confirmation: false
+
+    find:
+      executable: "/usr/bin/find"
+      max_args: 15
+      requires_confirmation: false
+
+    grep:
+      executable: "/usr/bin/grep"
+      max_args: 10
+      requires_confirmation: false
+
+    python3:
+      executable: "/usr/bin/python3"
+      max_args: 10
+      requires_confirmation: true
+
+    pip:
+      executable: "/usr/bin/pip3"
+      max_args: 10
+      requires_confirmation: true
+
+    java:
+      executable: "/usr/bin/java"
+      max_args: 20
+      requires_confirmation: true
+
+    mvn:
+      executable: "/usr/bin/mvn"
+      max_args: 20
+      requires_confirmation: false
+
+  # Path Restrictions
+  # All file operations must stay within allowed paths.
+  allowed_paths:
+    - "/home/oc-runner/workspace/**"
+    - "/tmp/oc-scratch/**"
+
+  blocked_paths:
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/etc/shadow"
+    - "**/etc/passwd"
+    - "**/.aws/**"
+    - "**/.env"
+
+  # File Transfer Limits
+  file_limits:
+    max_read_size: 10485760      # 10MB
+    max_write_size: 52428800     # 50MB
+    blocked_extensions:
+      - ".exe"
+      - ".dll"
+      - ".so"
+
+  # Default Resource Limits (applied via cgroups v2)
+  resource_limits:
+    cpu_quota_us: 100000         # 100% of one core
+    cpu_period_us: 100000
+    memory_max: "536870912"      # 512MB
+    pids_max: 32
+    io_weight: 100
+
+  # Confirmation Gates
+  confirmation_gates:
+    destructive_operations: true
+    command_with_overrides: true

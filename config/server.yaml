@@ -1,0 +1,33 @@
+# OpenClaw Remote Broker MCP - Server Configuration
+# Version: 1.0
+
+server:
+  host: "0.0.0.0"
+  port: 8443
+
+  tls:
+    cert_path: "/etc/oc-broker/server.crt"
+    key_path: "/etc/oc-broker/server.key"
+    ca_cert_path: "/etc/oc-broker/ca.crt"
+    min_version: "TLSv1.3"
+
+  logging:
+    level: "INFO"
+    format: "json"
+    audit_log: "/var/log/oc-broker/audit.log"
+    max_size_mb: 100
+    backup_count: 10
+
+  sessions:
+    max_session_age: 1800       # 30 minutes inactivity timeout
+    max_concurrent: 10
+    cleanup_interval: 60        # seconds between cleanup sweeps
+
+  timeouts:
+    command_default: 30         # seconds
+    command_max: 300            # max allowed timeout per command
+
+  sandbox:
+    unprivileged_user: "oc-runner"
+    cgroup_base: "/sys/fs/cgroup/oc-broker"
+    enable_cgroups: true
