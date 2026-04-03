@@ -22,7 +22,6 @@ from config.models import (
     SessionConfig,
     LoggingConfig,
     TimeoutConfig,
-    TLSConfig,
 )
 from session.manager import SessionManager
 from tools.base import ToolError
@@ -34,11 +33,6 @@ from tools.filesystem import FileSystemTools
 async def session_manager() -> SessionManager:
     cfg = ServerConfig(
         server=ServerBlock(
-            tls=TLSConfig(
-                cert_path=Path("/tmp/cert"),
-                key_path=Path("/tmp/key"),
-                ca_cert_path=Path("/tmp/ca"),
-            ),
             logging=LoggingConfig(audit_log=Path("/tmp/audit.log")),
             sessions=SessionConfig(),
             timeouts=TimeoutConfig(),
@@ -85,7 +79,7 @@ class TestDownloadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("dl", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("dl", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         # Create a test file
@@ -107,7 +101,7 @@ class TestDownloadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("dl2", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("dl2", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         content = "A" * 100
@@ -133,7 +127,7 @@ class TestDownloadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("dl3", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("dl3", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         with pytest.raises(ToolError, match="not found"):
@@ -148,7 +142,7 @@ class TestUploadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("ul", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("ul", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         data = base64.b64encode(b"uploaded content").decode()
@@ -170,7 +164,7 @@ class TestUploadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("ul2", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("ul2", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         part1 = base64.b64encode(b"hello ").decode()
@@ -201,7 +195,7 @@ class TestUploadFile:
         self, session_manager: SessionManager, tmp_path: Path
     ) -> None:
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("ul3", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("ul3", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         part1 = base64.b64encode(b"first").decode()
@@ -239,7 +233,7 @@ class TestConfirmationGate:
                 ConfirmationRequired(name="python3", reason="Can execute arbitrary code"),
             ],
         )
-        await session_manager.create_session("cg", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("cg", tmp_path, None)
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
         # Act + Assert: confirm=False → blocked
@@ -259,7 +253,7 @@ class TestConfirmationGate:
                 ConfirmationRequired(name="ls", reason="Lists directory contents"),
             ],
         )
-        await session_manager.create_session("cg2", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("cg2", tmp_path, None)
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
         # Act: confirm=True → allowed
@@ -274,7 +268,7 @@ class TestConfirmationGate:
     ) -> None:
         # Arrange: ls is NOT in confirmation_required — runs freely
         policy = _make_policy(tmp_path)
-        await session_manager.create_session("cg3", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("cg3", tmp_path, None)
         executor = CommandExecutor(session_manager, policy, user_ctx=None)
 
         # Act: no confirm flag needed
@@ -318,7 +312,7 @@ class TestResourceOverride:
                 ),
             },
         )
-        await session_manager.create_session("rq", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("rq", tmp_path, None)
         executor = CommandExecutor(session_manager, policy, user_ctx=None, cgroup_manager=None)
 
         # Should still work — override is skipped gracefully

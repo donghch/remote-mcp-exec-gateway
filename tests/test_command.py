@@ -29,7 +29,6 @@ from config.models import (
     SessionConfig,
     LoggingConfig,
     TimeoutConfig,
-    TLSConfig,
 )
 from config.loader import load_policy_config
 from session.manager import Session, SessionManager
@@ -48,11 +47,6 @@ def _make_server_config() -> ServerConfig:
     """Minimal server config for test session manager."""
     return ServerConfig(
         server=ServerBlock(
-            tls=TLSConfig(
-                cert_path=Path("/tmp/cert"),
-                key_path=Path("/tmp/key"),
-                ca_cert_path=Path("/tmp/ca"),
-            ),
             logging=LoggingConfig(audit_log=Path("/tmp/audit.log")),
             sessions=SessionConfig(max_session_age=3600, max_concurrent=5, cleanup_interval=60),
             timeouts=TimeoutConfig(),
@@ -109,7 +103,6 @@ async def tmp_session(session_manager: SessionManager) -> Session:
             session_id="test-session",
             working_dir=Path(tmpdir),
             environment=None,
-            client_identity=None,  # type: ignore[arg-type]
         )
         yield session
         await session_manager.kill_session("test-session")
@@ -467,7 +460,7 @@ class TestFileOperations:
                 confirmation_gates=ConfirmationGates(),
             )
         )
-        await session_manager.create_session("fs-test", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("fs-test", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         write_result = await fs.write_file("fs-test", "test.txt", "hello world")
@@ -493,7 +486,7 @@ class TestFileOperations:
                 confirmation_gates=ConfirmationGates(),
             )
         )
-        await session_manager.create_session("fs-list", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("fs-list", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
 
         await fs.write_file("fs-list", "a.txt", "aaa")
@@ -520,7 +513,7 @@ class TestFileOperations:
                 confirmation_gates=ConfirmationGates(),
             )
         )
-        await session_manager.create_session("fs-noread", tmp_path, None, None)  # type: ignore[arg-type]
+        await session_manager.create_session("fs-noread", tmp_path, None)
         fs = FileSystemTools(session_manager, policy)
         with pytest.raises(ToolError, match="not found"):
             await fs.read_file("fs-noread", "does_not_exist.txt")

@@ -17,7 +17,6 @@
 | HTTP Server | uvicorn | >=0.24.0 | Streamable HTTP transport for MCP |
 | Data Validation | Pydantic | v2 (>=2.5.0) | Config models, result serialization |
 | Config | PyYAML | >=6.0.1 | policy.yaml + server.yaml |
-| TLS/Crypto | cryptography | >=41.0.0 | mTLS certificate validation |
 | Logging | structlog | >=23.2.0 | Structured JSON logs |
 | System Monitor | psutil | >=5.9.6 | CPU/memory/disk usage |
 | Async File I/O | aiofiles | >=23.2.0 | Non-blocking file operations |
@@ -31,7 +30,7 @@ Type: Single-user agent-based gateway
 Pattern: Transport → Security Guard → Executor → Sandbox
 Components:
   1. MCP Transport Layer  - Streamable HTTP, request parsing, response streaming
-  2. Security Guard       - mTLS auth, policy enforcement, replay protection
+  2. Security Guard       - Policy enforcement, replay protection
   3. Command Executor     - Safe process spawning (shell=False, argv only)
   4. Session Manager      - Session-scoped execution, process group tracking
   5. File Service         - Read/write/list within allowed workspace roots
@@ -47,9 +46,8 @@ oc-broker/
 │   ├── models.py            # Pydantic config models (ServerConfig, PolicyConfig)
 │   ├── loader.py            # YAML → Pydantic validation
 │   ├── policy.yaml          # Command blacklist, path restrictions, resource limits
-│   └── server.yaml          # TLS, timeouts, sandbox settings
+│   └── server.yaml          # Timeouts, sandbox settings
 ├── security/
-│   ├── auth.py              # mTLS validation, ClientIdentity extraction
 │   ├── sanitizer.py         # PathSanitizer, CommandSanitizer
 │   └── sandbox.py           # CGroupManager, UserContext, preexec_fn
 ├── tools/
@@ -163,7 +161,6 @@ class PathSanitizer:
 - `Path` objects for all file paths, `str` only at I/O boundaries
 
 ## Security Requirements
-- **mTLS required**: Client + server certs, TLS 1.3 minimum, `ssl.CERT_REQUIRED`
 - **Command blacklist**: All commands allowed by default; `banned_commands` list blocks explicitly, `confirmation_required` list gates on `confirm=true`
 - **Policy structure** (`config/policy.yaml`):
   ```yaml
@@ -191,7 +188,7 @@ class PathSanitizer:
 ## 📂 Codebase References
 **Entry Point**: `main.py` - FastMCP server, tool registration, lifespan
 **Config**: `config/models.py` - Pydantic models, `config/loader.py` - YAML loading
-**Security**: `security/auth.py` - mTLS, `security/sanitizer.py` - input validation, `security/sandbox.py` - cgroups
+**Security**: `security/sanitizer.py` - input validation, `security/sandbox.py` - cgroups
 **Tools**: `tools/base.py` - ToolResult/ToolError, `tools/command.py` - CommandExecutor
 **Sessions**: `session/manager.py` - SessionManager | **Audit**: `audit/logger.py` - AuditLogger, EventType
 **Policy**: `config/policy.yaml` - command blacklist, path restrictions

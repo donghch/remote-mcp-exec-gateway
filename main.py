@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import signal as _signal
-import ssl
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,7 +21,6 @@ from mcp.server.fastmcp import FastMCP
 from audit.logger import AuditLogger, EventType
 from config.loader import load_configs
 from config.models import PolicyConfig, ServerConfig
-from security.auth import create_ssl_context
 from security.sandbox import CGroupManager, UserContext
 from session.manager import SessionManager
 from tools.base import ToolError, ToolResult
@@ -167,7 +165,6 @@ def create_server(config_dir: str = "config") -> FastMCP:
                 session_id=id,
                 working_dir=Path(working_dir),
                 environment=environment,
-                client_identity=None,  # type: ignore[arg-type]
             )
             audit.log(EventType.SESSION_CREATED, session_id=session.session_id)
             return {
@@ -523,54 +520,25 @@ def main() -> None:
         default=None,
         help="Override server port",
     )
-    parser.add_argument(
-        "--no-tls",
-        action="store_true",
-        help="Disable mTLS and run over plain HTTP (overrides config)",
-    )
     args = parser.parse_args()
 
-    # Load config early to determine TLS mode
+    # Load config
     config_dir = Path(args.config_dir)
     server_cfg, _ = load_configs(config_dir)
     srv = server_cfg.server
 
     host = args.host or srv.host
     port = args.port or srv.port
-    tls_enabled = srv.tls.enabled and not args.no_tls
 
     mcp = create_server(config_dir=args.config_dir)
 
-    if tls_enabled:
-        # Validate TLS paths are configured
-        if not srv.tls.cert_path or not srv.tls.key_path or not srv.tls.ca_cert_path:
-            print(
-                "ERROR: TLS enabled but cert_path/key_path/ca_cert_path not configured",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        ssl_ctx = create_ssl_context(
-            server_cert=srv.tls.cert_path,
-            server_key=srv.tls.key_path,
-            ca_cert=srv.tls.ca_cert_path,
-        )
-        print(f"Starting broker with mTLS on https://{host}:{port}")
-        uvicorn.run(
-            mcp.streamable_http_app(),
-            host=host,
-            port=port,
-            ssl=ssl_ctx,
-            log_level=srv.logging.level.value.lower(),
-        )
-    else:
-        print(f"Starting broker with plain HTTP on http://{host}:{port}")
-        uvicorn.run(
-            mcp.streamable_http_app(),
-            host=host,
-            port=port,
-            log_level=srv.logging.level.value.lower(),
-        )
+    print(f"Starting broker on http://{host}:{port}")
+    uvicorn.run(
+        mcp.streamable_http_app(),
+        host=host,
+        port=port,
+        log_level=srv.logging.level.value.lower(),
+    )
 
 
 if __name__ == "__main__":

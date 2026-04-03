@@ -9,7 +9,7 @@ The **OpenClaw Remote Broker MCP** is a secure remote execution gateway that exp
 - Whitelist/blacklist command policy enforcement
 - Path sanitization and workspace boundary enforcement
 - Structured audit logging for all operations
-- Optional mTLS authentication and cgroups sandboxing
+- cgroups sandboxing
 
 ---
 
@@ -411,13 +411,6 @@ git:
 server:
   host: "127.0.0.1"
   port: 8080
-
-  tls:
-    enabled: false
-    cert_path: "certs/server.crt"
-    key_path: "certs/server.key"
-    ca_cert_path: "certs/ca.crt"
-    min_version: "TLSv1.3"
 
   logging:
     level: "INFO"           # DEBUG, INFO, WARNING, ERROR

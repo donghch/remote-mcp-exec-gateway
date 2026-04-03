@@ -6,13 +6,6 @@ server:
   host: "127.0.0.1"
   port: 8080
 
-  tls:
-    enabled: false              # Plain HTTP by default (no mTLS)
-    cert_path: "certs/server.crt"
-    key_path: "certs/server.key"
-    ca_cert_path: "certs/ca.crt"
-    min_version: "TLSv1.3"
-
   logging:
     level: "INFO"
     format: "json"

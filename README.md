@@ -8,7 +8,6 @@ The broker lets an AI agent operate on a remote machine without requiring any cl
 
 - **MCP-native** — Exposes 9 tools over Streamable HTTP transport (the modern MCP standard)
 - **Whitelist-only commands** — Only explicitly allowed binaries can run; no arbitrary shell access
-- **mTLS authentication** — Mutual TLS 1.3 ensures only trusted clients connect
 - **Sandboxed execution** — cgroups v2 resource limits + unprivileged OS user for every subprocess
 - **Path validation** — All file operations are canonicalized and restricted to workspace roots
 - **Session isolation** — Each session gets its own working directory (defaults to user's home), environment, and process group
@@ -20,7 +19,6 @@ The broker lets an AI agent operate on a remote machine without requiring any cl
 - **Python 3.13+**
 - **Linux** with cgroups v2 (for sandboxing; optional — degrades gracefully)
 - A dedicated unprivileged OS user for sandboxed execution (default: `oc-runner`)
-- TLS certificates for mTLS (server cert, server key, CA cert)
 
 ### System packages
 
@@ -55,11 +53,6 @@ Two YAML files in `config/` control the broker:
 server:
   host: "127.0.0.1"
   port: 8080
-  tls:
-    enabled: false             # Plain HTTP by default
-    cert_path: "certs/server.crt"
-    key_path: "certs/server.key"
-    ca_cert_path: "certs/ca.crt"
   logging:
     audit_log: "log/audit.log"
     error_log: "log/audit-errors.log"
@@ -70,7 +63,6 @@ server:
 ```
 
 > All paths are relative to the project root. No root privileges required for default config.
-> Use `--no-tls` CLI flag or `tls.enabled: false` in config to control TLS.
 
 ### `config/policy.yaml` — Security policy
 
@@ -111,29 +103,11 @@ uv sync
 uv run python main.py
 ```
 
-The broker starts on `http://127.0.0.1:8080` with plain HTTP. No root, no certs, no sandbox user required.
+The broker starts on `http://127.0.0.1:8080` with plain HTTP. No root, no sandbox user required.
 
-### 2. Enable mTLS (optional, for production)
+### 2. Connect from an MCP client
 
-```bash
-# Generate certs
-mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
-  -keyout certs/ca.key -out certs/ca.crt -subj "/CN=OC-Broker CA"
-openssl req -newkey rsa:4096 -nodes \
-  -keyout certs/server.key -out certs/server.csr -subj "/CN=oc-broker-server"
-openssl x509 -req -days 365 \
-  -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key -CAcreateserial \
-  -out certs/server.crt
-
-# Edit config/server.yaml: tls.enabled: true
-# Then start:
-uv run python main.py --host 0.0.0.0 --port 8443
-```
-
-### 3. Connect from an MCP client
-
-The broker exposes tools over Streamable HTTP at `http://<host>:<port>/mcp` (or `https://` with TLS enabled). Any MCP-compatible client can connect.
+The broker exposes tools over Streamable HTTP at `http://<host>:<port>/mcp`. Any MCP-compatible client can connect.
 
 ## Available Tools
 
@@ -249,12 +223,8 @@ Without `confirm: true`, the broker returns a `POLICY_CONFIRMATION_REQUIRED` err
 ```
 Client (AI Agent)
     │
-    ▼  mTLS (TLS 1.3, client cert required)
+    ▼
 ┌───────────────────────────────────────┐
-│  Auth Middleware                      │
-│  → Validate client cert against CA   │
-│  → Extract client identity           │
-├───────────────────────────────────────┤
 │  Policy Enforcement                  │
 │  → Session exists and is active?     │
 │  → Path within workspace roots?      │
@@ -319,17 +289,6 @@ Options:
   --config-dir PATH   Path to configuration directory (default: config)
   --host ADDRESS      Override server bind address
   --port PORT         Override server port
-  --no-tls            Disable mTLS and run over plain HTTP (overrides config)
-```
-
-### Running without TLS (development)
-
-```bash
-# Via config
-# Edit config/server.yaml: tls.enabled: false
-
-# Or via CLI flag
-uv run python main.py --no-tls --host 127.0.0.1 --port 8080
 ```
 
 ## Project Structure
@@ -343,7 +302,6 @@ oc-broker/
 │   ├── models.py           # Pydantic config models
 │   └── loader.py           # YAML config loading
 ├── security/
-│   ├── auth.py             # mTLS authentication
 │   ├── sanitizer.py        # Path + command validation
 │   └── sandbox.py          # cgroups v2 + privilege dropping
 ├── tools/

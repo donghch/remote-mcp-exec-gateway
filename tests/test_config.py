@@ -45,8 +45,6 @@ class TestServerConfig:
         assert isinstance(cfg, ServerConfig)
         assert cfg.server.port == 8080
         assert cfg.server.host == "127.0.0.1"
-        assert cfg.server.tls.enabled is False
-        assert cfg.server.tls.min_version == "TLSv1.3"
         assert cfg.server.sessions.max_session_age == 1800
 
     def test_server_config_missing_file(self, tmp_path: Path) -> None:

@@ -22,7 +22,6 @@ Architecture decisions, module interfaces, extension points, and testing strateg
 main.py (FastMCP server)
   │
   ├── config/loader.py          Loads server.yaml + policy.yaml → Pydantic models
-  ├── security/auth.py          mTLS cert validation → ClientIdentity
   ├── security/sanitizer.py     Path canonicalization + command whitelist
   ├── security/sandbox.py       cgroups v2 + unprivileged user preexec
   ├── session/manager.py        Session create/lookup/kill/cleanup
@@ -68,14 +67,6 @@ Three functions:
 - `load_configs(config_dir)` → `(ServerConfig, PolicyConfig)` — convenience wrapper
 
 All raise `FileNotFoundError` or `ValueError` on bad input. Pydantic handles type validation.
-
-### `security/auth.py`
-
-- **`MTLSValidator(ca_cert_path)`** — loads CA cert, provides `validate(cert_pem) → ClientIdentity`
-- **`ClientIdentity`** — frozen dataclass with `cn`, `organization`, `fingerprint`, `not_before`, `not_after`
-- **`create_ssl_context(...)`** — builds `ssl.SSLContext` with `CERT_REQUIRED` for mTLS
-
-The validation chain: parse cert → check expiry → verify CA signature → extract DN.
 
 ### `security/sanitizer.py`
 
@@ -244,12 +235,7 @@ No code changes needed — the policy is loaded at startup.
 | Path | Type | Default | Description |
 |------|------|---------|-------------|
 | `server.host` | str | `"0.0.0.0"` | Bind address |
-| `server.port` | int | `8443` | Bind port |
-| `server.tls.cert_path` | Path | — | Server certificate PEM |
-| `server.tls.key_path` | Path | — | Server private key PEM |
-| `server.tls.ca_cert_path` | Path | — | CA cert for client validation |
-| `server.tls.min_version` | str | `"TLSv1.3"` | Minimum TLS version |
-| `server.tls.enabled` | bool | `true` | Enable/disable mTLS |
+| `server.port` | int | `8080` | Bind port |
 | `server.logging.level` | str | `"INFO"` | Log level |
 | `server.logging.audit_log` | Path | — | Audit log file path |
 | `server.logging.error_log` | Path \| null | `<audit_log>-errors.log` | Error-only log file path |
@@ -289,13 +275,12 @@ No code changes needed — the policy is loaded at startup.
 
 Every tool call passes through this chain in order:
 
-1. **Transport** — mTLS handshake validates client certificate
-2. **Session** — `session_manager.get_session()` checks session exists and not expired
-3. **Path** — `PathSanitizer.sanitize()` canonicalizes → checks blocked → checks allowed
-4. **Command** — `CommandSanitizer.validate()` checks whitelist → arg count → subcommand prefix
-5. **Confirmation** — if `requires_confirmation`, raises `POLICY_CONFIRMATION_REQUIRED`
-6. **Sandbox** — `make_preexec_fn()` drops privileges + joins cgroup before exec
-7. **Audit** — every step logged via `AuditLogger`
+1. **Session** — `session_manager.get_session()` checks session exists and not expired
+2. **Path** — `PathSanitizer.sanitize()` canonicalizes → checks blocked → checks allowed
+3. **Command** — `CommandSanitizer.validate()` checks whitelist → arg count → subcommand prefix
+4. **Confirmation** — if `requires_confirmation`, raises `POLICY_CONFIRMATION_REQUIRED`
+5. **Sandbox** — `make_preexec_fn()` drops privileges + joins cgroup before exec
+6. **Audit** — every step logged via `AuditLogger`
 
 ### Privilege model
 
@@ -370,7 +355,6 @@ uv run pytest tests/ -v
 | `test_filesystem.py` | File append mode | Integration with temp sessions |
 | `test_sandbox.py` | CGroupManager, UserContext | Mocked (no real cgroups needed) |
 | `test_phase2.py` | Download/upload, confirmation gate, resource quotas | Integration with temp sessions |
-| `test_tls.py` | TLSConfig on/off, SSL context creation | Unit tests with self-signed certs |
 | `test_error_logging.py` | Error log file, log_error(), traceback, event types | Unit tests with temp files |
 
 ### Writing new tests
@@ -412,4 +396,3 @@ For **sandbox tests**, mock `CGroupManager` since test environments may not have
 | File transfer | Chunked base64 | Works over MCP tool calls, no separate HTTP endpoints |
 | Confirmation | `confirm` param on execute_command | Explicit opt-in for destructive commands |
 | Resource quotas | Per-command cgroup | Override default limits for heavy commands (e.g. Python) |
-| TLS toggle | `tls.enabled` + `--no-tls` | Run plain HTTP for development, mTLS for production |

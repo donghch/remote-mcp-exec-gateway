@@ -14,7 +14,6 @@ from config.models import (
     ConfirmationGates,
     ServerConfig,
     ServerBlock,
-    TLSConfig,
     LoggingConfig,
     SessionConfig,
     TimeoutConfig,
@@ -28,11 +27,6 @@ from tools.filesystem import FileSystemTools
 async def session_manager() -> SessionManager:
     cfg = ServerConfig(
         server=ServerBlock(
-            tls=TLSConfig(
-                cert_path=Path("/tmp/cert"),
-                key_path=Path("/tmp/key"),
-                ca_cert_path=Path("/tmp/ca"),
-            ),
             logging=LoggingConfig(audit_log=Path("/tmp/audit.log")),
             sessions=SessionConfig(),
             timeouts=TimeoutConfig(),
@@ -62,7 +56,6 @@ class TestFileAppend:
             "append-test",
             tmp_path,
             None,
-            None,  # type: ignore[arg-type]
         )
         fs = FileSystemTools(session_manager, policy)
 

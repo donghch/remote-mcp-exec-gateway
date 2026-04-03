@@ -9,17 +9,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-# --- TLS ---
-
-
-class TLSConfig(BaseModel):
-    enabled: bool = True
-    cert_path: Path | None = None
-    key_path: Path | None = None
-    ca_cert_path: Path | None = None
-    min_version: Literal["TLSv1.2", "TLSv1.3"] = "TLSv1.3"
-
-
 # --- Logging ---
 
 
@@ -70,8 +59,7 @@ class SandboxConfig(BaseModel):
 
 class ServerBlock(BaseModel):
     host: str = "0.0.0.0"
-    port: int = Field(ge=1, le=65535, default=8443)
-    tls: TLSConfig
+    port: int = Field(ge=1, le=65535, default=8080)
     logging: LoggingConfig
     sessions: SessionConfig
     timeouts: TimeoutConfig

@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.models import ServerConfig
-from security.auth import ClientIdentity
 from security.sandbox import CGroupContext, CGroupManager
 
 
@@ -33,7 +32,6 @@ class Session:
     last_activity: datetime
     working_dir: Path
     environment: dict[str, str]
-    client_identity: ClientIdentity
     cgroup: CGroupContext | None
     processes: dict[int, ProcessRecord] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -108,7 +106,6 @@ class SessionManager:
         session_id: str | None,
         working_dir: Path,
         environment: dict[str, str] | None,
-        client_identity: ClientIdentity,
     ) -> Session:
         """Create a new session with optional cgroup isolation."""
         sid = session_id or str(uuid.uuid4())
@@ -139,7 +136,6 @@ class SessionManager:
             last_activity=now,
             working_dir=resolved,
             environment=environment or {},
-            client_identity=client_identity,
             cgroup=cgroup,
         )
         self._sessions[sid] = session
